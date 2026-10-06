@@ -1,0 +1,943 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>眼動拍照工具（可調整版面版）</title>
+<style>
+  :root{
+    --bg: #FDF6EC;
+    --panel: #FFFFFF;
+    --ink: #4A3F35;
+    --switch-color: #6FA8DC;
+    --switch-color-dark: #3E7BB5;
+    --confirm-color: #F2A65A;
+    --confirm-color-dark: #D9853A;
+    --stage-border: #E8DFCF;
+  }
+  *{ box-sizing: border-box; }
+  html, body{
+    margin:0; padding:0; height:100%;
+    background: var(--bg);
+    font-family: "PingFang TC","Microsoft JhengHei","Noto Sans TC",sans-serif;
+    color: var(--ink);
+    overflow: hidden;
+  }
+  .app{
+    height:100vh;
+    display:flex;
+    flex-direction:column;
+    padding: 16px;
+    gap: 14px;
+  }
+  .title-row{
+    flex: 0 0 auto;
+    display:flex;
+    align-items:center;
+    justify-content:center;
+    position:relative;
+  }
+  .title{
+    font-size: clamp(18px, 2.4vh, 26px);
+    font-weight: 700;
+    letter-spacing: 1px;
+  }
+  .photo-count{
+    font-size: 12px;
+    font-weight: 400;
+    color:#8a7c6a;
+    margin-left:8px;
+  }
+  .header-btns{
+    position:absolute;
+    right: 0;
+    top: 50%;
+    transform: translateY(-50%);
+    display:flex;
+    gap: 8px;
+  }
+  .chip-btn{
+    background: var(--panel);
+    border: 2px solid var(--stage-border);
+    border-radius: 12px;
+    padding: 6px 14px;
+    font-size: 13px;
+    color: var(--ink);
+    cursor:pointer;
+    font-family: inherit;
+  }
+  .chip-btn:hover{ background: #f5ede0; }
+  .chip-btn.on{ background: #6FA8DC; color:#fff; border-color:#3E7BB5; }
+
+  .canvas{
+    flex: 1 1 auto;
+    position: relative;
+    min-height: 0;
+  }
+  .stage{
+    position:absolute;
+    background: #000;
+    border: 3px solid var(--stage-border);
+    border-radius: 28px;
+    overflow:hidden;
+    z-index: 1;
+  }
+  .stage.editable{
+    cursor: move;
+    outline: 3px dashed rgba(255,255,255,0.9);
+    outline-offset: -3px;
+  }
+  #camera-video{
+    position:absolute;
+    inset:0;
+    width:100%;
+    height:100%;
+    object-fit: cover;
+    background:#000;
+  }
+  #review-img{
+    position:absolute;
+    inset:0;
+    width:100%;
+    height:100%;
+    object-fit: contain;
+    background:#000;
+    display:none;
+  }
+  .stage.mode-review #camera-video{ display:none; }
+  .stage.mode-review #review-img{ display:block; }
+
+  .flash-overlay{
+    position:absolute;
+    inset:0;
+    background:#fff;
+    opacity:0;
+    pointer-events:none;
+    transition: opacity 0.12s ease;
+    z-index: 9;
+  }
+  .flash-overlay.flash{ opacity:0.85; transition: none; }
+
+  .countdown-overlay{
+    position:absolute;
+    inset:0;
+    display:none;
+    align-items:center;
+    justify-content:center;
+    background: rgba(0,0,0,0.35);
+    color:#fff;
+    font-size: clamp(90px, 26vh, 240px);
+    font-weight:800;
+    text-shadow: 0 6px 18px rgba(0,0,0,0.5);
+    z-index: 12;
+    pointer-events:none;
+  }
+
+  .video-caption{
+    position:absolute;
+    left:0; right:0; bottom:0;
+    padding: 10px 16px;
+    background: linear-gradient(to top, rgba(0,0,0,0.65), rgba(0,0,0,0));
+    color:#fff;
+    font-size: clamp(13px, 1.8vh, 16px);
+    font-weight: 500;
+    pointer-events:none;
+    z-index: 8;
+  }
+  .picker-overlay{
+    position:absolute;
+    inset:0;
+    background: #1c1c1c;
+    display:flex;
+    flex-direction:column;
+    align-items:center;
+    justify-content:center;
+    gap: 20px;
+    text-align:center;
+    padding: 24px;
+    z-index: 20;
+  }
+  .picker-overlay p{
+    color:#eadfce;
+    font-size: clamp(14px, 1.8vh, 18px);
+    line-height:1.7;
+    max-width: 420px;
+    margin:0;
+  }
+  .picker-btn{
+    background: var(--switch-color);
+    color:#fff;
+    border:none;
+    border-radius: 20px;
+    padding: 18px 36px;
+    font-size: clamp(18px, 2.4vh, 24px);
+    font-weight:700;
+    cursor:pointer;
+    font-family: inherit;
+    box-shadow: 0 6px 0 rgba(0,0,0,0.25);
+  }
+  .picker-btn:active{ transform: translateY(4px); box-shadow: 0 2px 0 rgba(0,0,0,0.25); }
+  .picker-warn{
+    color:#e08a8a;
+    font-size: 13px;
+  }
+
+  .big-btn{
+    position:absolute;
+    border: none;
+    border-radius: 26px;
+    display:flex;
+    flex-direction:column;
+    align-items:center;
+    justify-content:center;
+    gap: 10px;
+    cursor:pointer;
+    color:#fff;
+    font-family: inherit;
+    font-weight: 700;
+    font-size: clamp(16px, 2.6vw, 30px);
+    line-height: 1.3;
+    -webkit-tap-highlight-color: transparent;
+    user-select:none;
+    transition: filter 0.12s ease, background-color 0.15s ease;
+    box-shadow: 0 6px 0 rgba(0,0,0,0.15);
+    z-index: 10;
+    overflow:hidden;
+    padding: 6px;
+    text-align:center;
+  }
+  .big-btn:disabled{ opacity: 0.5; cursor: default; }
+  .big-btn:active{ filter: brightness(0.95); }
+  .big-btn:hover{ filter: brightness(1.05); }
+  .big-btn.switch{ background: var(--switch-color); }
+  .big-btn.confirm{ background: var(--confirm-color); }
+  .big-btn.confirm.is-review{ background: #7CB37C; }
+  .btn-icon{ font-size: clamp(24px, 5vw, 60px); line-height:1; }
+  .btn-sub{
+    font-size: clamp(11px, 1.4vw, 17px);
+    font-weight: 400;
+    opacity: 0.9;
+  }
+
+  /* --- 編輯模式 --- */
+  .big-btn.editable{
+    cursor: move;
+    outline: 3px dashed rgba(255,255,255,0.9);
+    outline-offset: -3px;
+  }
+  .resize-handle{
+    display:none;
+    position:absolute;
+    right: 4px;
+    bottom: 4px;
+    width: 26px;
+    height: 26px;
+    background: #fff;
+    border-radius: 6px;
+    cursor: nwse-resize;
+    z-index: 15;
+    box-shadow: 0 2px 4px rgba(0,0,0,0.3);
+  }
+  .resize-handle::after{
+    content: "";
+    position:absolute;
+    right:6px; bottom:6px;
+    width:10px; height:10px;
+    border-right: 3px solid #4A3F35;
+    border-bottom: 3px solid #4A3F35;
+  }
+  .big-btn.editable .resize-handle,
+  .stage.editable .resize-handle{ display:block; }
+
+  .edit-toolbar{
+    position:absolute;
+    left: 50%;
+    bottom: 20px;
+    transform: translateX(-50%);
+    background: rgba(30,26,20,0.92);
+    border-radius: 20px;
+    padding: 14px 20px;
+    display:none;
+    flex-wrap: wrap;
+    gap: 10px;
+    align-items:center;
+    justify-content:center;
+    z-index: 30;
+    max-width: 92%;
+  }
+  body.edit-mode .edit-toolbar{ display:flex; }
+  .edit-toolbar span.hint{
+    color:#eadfce;
+    font-size: 13px;
+    margin-right: 6px;
+  }
+  .edit-toolbar button{
+    font-family: inherit;
+    border:none;
+    border-radius: 10px;
+    padding: 8px 14px;
+    font-size: 13px;
+    cursor:pointer;
+    background:#4A3F35;
+    color:#fff;
+  }
+  .edit-toolbar button:hover{ background:#6b5b4b; }
+  .edit-toolbar button.primary{ background: var(--switch-color); }
+  .edit-toolbar button.danger{ background:#c96b6b; }
+</style>
+</head>
+<body>
+<div class="app">
+  <div class="title-row">
+    <div class="title">眼動拍照工具<span class="photo-count" id="photo-count">已拍 0 張</span></div>
+    <div class="header-btns">
+      <button class="chip-btn" id="btn-edit-toggle" type="button">⚙️ 調整版面</button>
+      <button class="chip-btn on" id="btn-voice-toggle" type="button">🔊 語音回饋</button>
+      <button class="chip-btn" id="btn-flip-camera" type="button">🔄 切換鏡頭</button>
+      <button class="chip-btn" id="btn-download-photo" type="button" disabled>💾 下載照片</button>
+      <button class="chip-btn" id="btn-clear-photos" type="button">🗑️ 清除照片</button>
+    </div>
+  </div>
+
+  <div class="canvas" id="canvas">
+    <div class="stage mode-camera">
+      <video id="camera-video" autoplay playsinline muted></video>
+      <img id="review-img" alt="已拍照片預覽">
+      <div class="flash-overlay" id="flash-overlay"></div>
+      <div class="countdown-overlay" id="countdown-overlay"></div>
+      <div class="video-caption" id="video-caption"></div>
+
+      <div class="picker-overlay" id="picker-overlay">
+        <p id="picker-text">請按下方按鈕開啟相機權限，開始使用眼動拍照功能。</p>
+        <button class="picker-btn" id="btn-start-camera" type="button">📷 開啟相機</button>
+        <div class="picker-warn" id="picker-warn"></div>
+      </div>
+
+      <div class="resize-handle" data-target="stage"></div>
+    </div>
+
+    <button id="btn-switch" class="big-btn switch" type="button" disabled>
+      <span class="btn-icon" id="switch-icon">🖼️</span>
+      <span id="switch-label">瀏覽照片</span>
+      <span class="btn-sub" id="switch-sub">查看已拍照片</span>
+      <div class="resize-handle" data-target="switch"></div>
+    </button>
+
+    <button id="btn-confirm" class="big-btn confirm" type="button" disabled>
+      <span class="btn-icon" id="confirm-icon">📷</span>
+      <span id="confirm-label">拍照</span>
+      <span class="btn-sub" id="confirm-sub">拍下目前畫面</span>
+      <div class="resize-handle" data-target="confirm"></div>
+    </button>
+
+    <div class="edit-toolbar" id="edit-toolbar">
+      <span class="hint">拖曳畫面區或按鍵可移動位置，拖右下角可調整大小</span>
+      <button id="preset-standard" type="button">標準大小</button>
+      <button id="preset-large" type="button">加大</button>
+      <button id="preset-xlarge" type="button">超大</button>
+      <button id="reset-layout" type="button">重設版面</button>
+      <button id="export-layout" type="button">匯出設定檔</button>
+      <button id="import-layout" type="button">匯入設定檔</button>
+      <input type="file" id="import-file-input" accept="application/json" style="display:none">
+      <span class="hint" style="margin-left:12px;">拍照倒數秒數</span>
+      <button id="countdown-minus" type="button">－</button>
+      <span id="countdown-value" style="color:#fff; font-weight:700; min-width:20px; text-align:center; display:inline-block;">3</span>
+      <button id="countdown-plus" type="button">＋</button>
+      <button id="finish-edit" class="primary" type="button">完成編輯</button>
+    </div>
+  </div>
+</div>
+
+<script>
+  const STORAGE_KEY = "eyegaze-camera-app-layout-v1";
+
+  let photos = [];         // { url, time }  最新的在陣列最前面
+  let reviewIndex = 0;
+  let mode = "camera";     // "camera" | "review"
+  let editMode = false;
+  let stream = null;
+  let currentFacing = "environment"; // 預設外鏡頭；沒有外鏡頭的裝置會自動退回可用鏡頭
+  let countdownActive = false;
+  const COUNTDOWN_STORAGE_KEY = "eyegaze-camera-app-countdown-v1";
+  let countdownSeconds = loadCountdownSeconds();
+  const VOICE_STORAGE_KEY = "eyegaze-camera-app-voice-v1";
+  let voiceEnabled = loadVoiceEnabled();
+  const CN_NUM = ["零","一","二","三","四","五","六","七","八","九","十"];
+
+  const video = document.getElementById("camera-video");
+  const reviewImg = document.getElementById("review-img");
+  const caption = document.getElementById("video-caption");
+  const flashOverlay = document.getElementById("flash-overlay");
+  const countdownEl = document.getElementById("countdown-overlay");
+  const photoCountEl = document.getElementById("photo-count");
+  const overlay = document.getElementById("picker-overlay");
+  const pickerWarn = document.getElementById("picker-warn");
+  const btnStartCamera = document.getElementById("btn-start-camera");
+  const btnVoiceToggle = document.getElementById("btn-voice-toggle");
+  const btnFlipCamera = document.getElementById("btn-flip-camera");
+  const btnDownloadPhoto = document.getElementById("btn-download-photo");
+  const btnClearPhotos = document.getElementById("btn-clear-photos");
+  const btnEditToggle = document.getElementById("btn-edit-toggle");
+  const countdownValueEl = document.getElementById("countdown-value");
+  const countdownMinusBtn = document.getElementById("countdown-minus");
+  const countdownPlusBtn = document.getElementById("countdown-plus");
+  const btnSwitch = document.getElementById("btn-switch");
+  const switchIcon = document.getElementById("switch-icon");
+  const switchLabel = document.getElementById("switch-label");
+  const switchSub = document.getElementById("switch-sub");
+  const confirmBtn = document.getElementById("btn-confirm");
+  const confirmIcon = document.getElementById("confirm-icon");
+  const confirmLabel = document.getElementById("confirm-label");
+  const confirmSub = document.getElementById("confirm-sub");
+  const canvas = document.getElementById("canvas");
+  const stageEl = document.querySelector(".stage");
+  const editToolbar = document.getElementById("edit-toolbar");
+  const importFileInput = document.getElementById("import-file-input");
+
+  // ---------- 版面（位置與大小）管理，邏輯與原本影片版完全相同 ----------
+  function elFor(key){
+    if(key === "switch") return btnSwitch;
+    if(key === "confirm") return confirmBtn;
+    return stageEl;
+  }
+
+  function defaultLayout(){
+    const W = canvas.clientWidth;
+    const H = canvas.clientHeight;
+    const btnW = Math.max(220, W * 0.32);
+    const btnH = Math.max(140, H * 0.42);
+    const left = W - btnW - 8;
+    return {
+      stage:   { left: 0, top: 0, width: W, height: H },
+      switch:  { left: left, top: 8,               width: btnW, height: btnH },
+      confirm: { left: left, top: H - btnH - 8,     width: btnW, height: btnH }
+    };
+  }
+
+  let layout = null;
+
+  function clampToCanvas(box){
+    const W = canvas.clientWidth;
+    const H = canvas.clientHeight;
+    box.width = Math.min(Math.max(box.width, 120), W);
+    box.height = Math.min(Math.max(box.height, 90), H);
+    box.left = Math.min(Math.max(box.left, 0), W - box.width);
+    box.top = Math.min(Math.max(box.top, 0), H - box.height);
+    return box;
+  }
+
+  function applyLayout(){
+    Object.keys(layout).forEach(key => {
+      const box = layout[key];
+      const el = elFor(key);
+      el.style.left = box.left + "px";
+      el.style.top = box.top + "px";
+      el.style.width = box.width + "px";
+      el.style.height = box.height + "px";
+    });
+  }
+
+  function saveLayout(){
+    try{
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(layout));
+    }catch(e){}
+  }
+
+  function loadSavedLayout(){
+    try{
+      const raw = localStorage.getItem(STORAGE_KEY);
+      if(raw){
+        const parsed = JSON.parse(raw);
+        if(parsed.switch && parsed.confirm){
+          if(!parsed.stage) parsed.stage = defaultLayout().stage;
+          return parsed;
+        }
+      }
+    }catch(e){}
+    return null;
+  }
+
+  function initLayout(){
+    layout = loadSavedLayout() || defaultLayout();
+    Object.keys(layout).forEach(key => { layout[key] = clampToCanvas(layout[key]); });
+    applyLayout();
+  }
+
+  // ---------- 拖曳移動 ----------
+  function startDrag(e, key){
+    if(!editMode) return;
+    e.preventDefault();
+    const box = layout[key];
+    const startX = e.clientX, startY = e.clientY;
+    const startLeft = box.left, startTop = box.top;
+
+    function onMove(ev){
+      box.left = startLeft + (ev.clientX - startX);
+      box.top = startTop + (ev.clientY - startY);
+      clampToCanvas(box);
+      applyLayout();
+    }
+    function onUp(){
+      document.removeEventListener("mousemove", onMove);
+      document.removeEventListener("mouseup", onUp);
+      saveLayout();
+    }
+    document.addEventListener("mousemove", onMove);
+    document.addEventListener("mouseup", onUp);
+  }
+
+  // ---------- 拖曳調整大小 ----------
+  function startResize(e, key){
+    if(!editMode) return;
+    e.preventDefault();
+    e.stopPropagation();
+    const box = layout[key];
+    const startX = e.clientX, startY = e.clientY;
+    const startW = box.width, startH = box.height;
+
+    function onMove(ev){
+      box.width = startW + (ev.clientX - startX);
+      box.height = startH + (ev.clientY - startY);
+      clampToCanvas(box);
+      applyLayout();
+    }
+    function onUp(){
+      document.removeEventListener("mousemove", onMove);
+      document.removeEventListener("mouseup", onUp);
+      saveLayout();
+    }
+    document.addEventListener("mousemove", onMove);
+    document.addEventListener("mouseup", onUp);
+  }
+
+  btnSwitch.addEventListener("mousedown", (e) => {
+    if(!editMode || e.target.closest(".resize-handle")) return;
+    startDrag(e, "switch");
+  });
+  confirmBtn.addEventListener("mousedown", (e) => {
+    if(!editMode || e.target.closest(".resize-handle")) return;
+    startDrag(e, "confirm");
+  });
+  stageEl.addEventListener("mousedown", (e) => {
+    if(!editMode) return;
+    if(e.target.closest(".resize-handle")) return;
+    if(e.target.closest(".picker-overlay")) return;
+    startDrag(e, "stage");
+  });
+  document.querySelector('.resize-handle[data-target="switch"]').addEventListener("mousedown", (e) => startResize(e, "switch"));
+  document.querySelector('.resize-handle[data-target="confirm"]').addEventListener("mousedown", (e) => startResize(e, "confirm"));
+  document.querySelector('.resize-handle[data-target="stage"]').addEventListener("mousedown", (e) => startResize(e, "stage"));
+
+  // ---------- 編輯模式切換 ----------
+  function setEditMode(on){
+    editMode = on;
+    document.body.classList.toggle("edit-mode", on);
+    btnEditToggle.classList.toggle("on", on);
+    btnSwitch.classList.toggle("editable", on);
+    confirmBtn.classList.toggle("editable", on);
+    stageEl.classList.toggle("editable", on);
+  }
+
+  btnEditToggle.addEventListener("click", () => setEditMode(!editMode));
+  document.getElementById("finish-edit").addEventListener("click", () => setEditMode(false));
+
+  // ---------- 大小快速預設 ----------
+  function applyPreset(scale){
+    const def = defaultLayout();
+    ["switch", "confirm"].forEach(key => {
+      const cur = layout[key];
+      const baseW = def[key].width;
+      const baseH = def[key].height;
+      cur.width = baseW * scale;
+      cur.height = baseH * scale;
+      clampToCanvas(cur);
+    });
+    applyLayout();
+    saveLayout();
+  }
+  document.getElementById("preset-standard").addEventListener("click", () => applyPreset(1));
+  document.getElementById("preset-large").addEventListener("click", () => applyPreset(1.3));
+  document.getElementById("preset-xlarge").addEventListener("click", () => applyPreset(1.6));
+
+  document.getElementById("reset-layout").addEventListener("click", () => {
+    layout = defaultLayout();
+    applyLayout();
+    saveLayout();
+  });
+
+  // ---------- 匯出／匯入設定檔 ----------
+  document.getElementById("export-layout").addEventListener("click", () => {
+    const blob = new Blob([JSON.stringify(layout, null, 2)], { type: "application/json" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = "按鍵版面設定.json";
+    a.click();
+    URL.revokeObjectURL(url);
+  });
+
+  document.getElementById("import-layout").addEventListener("click", () => importFileInput.click());
+  importFileInput.addEventListener("change", async () => {
+    const file = importFileInput.files[0];
+    if(!file) return;
+    try{
+      const text = await file.text();
+      const parsed = JSON.parse(text);
+      if(parsed.switch && parsed.confirm){
+        layout.switch = clampToCanvas(parsed.switch);
+        layout.confirm = clampToCanvas(parsed.confirm);
+        layout.stage = clampToCanvas(parsed.stage || defaultLayout().stage);
+        applyLayout();
+        saveLayout();
+      }
+    }catch(e){
+      alert("設定檔格式不正確");
+    }
+    importFileInput.value = "";
+  });
+
+  window.addEventListener("resize", () => {
+    Object.keys(layout).forEach(key => { layout[key] = clampToCanvas(layout[key]); });
+    applyLayout();
+  });
+
+  // ---------- 相機 / 拍照邏輯 ----------
+  function supported(){
+    return !!(navigator.mediaDevices && navigator.mediaDevices.getUserMedia);
+  }
+
+  function formatTime(d){
+    const hh = String(d.getHours()).padStart(2, "0");
+    const mm = String(d.getMinutes()).padStart(2, "0");
+    const ss = String(d.getSeconds()).padStart(2, "0");
+    return `${hh}:${mm}:${ss}`;
+  }
+
+  function updatePhotoCount(){
+    photoCountEl.textContent = `已拍 ${photos.length} 張`;
+    btnDownloadPhoto.disabled = photos.length === 0;
+  }
+
+  function updateButtons(){
+    if(mode === "camera"){
+      switchIcon.textContent = "🖼️";
+      switchLabel.textContent = "瀏覽照片";
+      switchSub.textContent = photos.length ? "查看已拍照片" : "尚無照片";
+      confirmBtn.classList.remove("is-review");
+      confirmIcon.textContent = "📷";
+      confirmLabel.textContent = "拍照";
+      confirmSub.textContent = "拍下目前畫面";
+      caption.textContent = "";
+    } else {
+      switchIcon.textContent = "➡️";
+      switchLabel.textContent = "下一張";
+      switchSub.textContent = "換下一張照片";
+      confirmBtn.classList.add("is-review");
+      confirmIcon.textContent = "↩️";
+      confirmLabel.textContent = "返回相機";
+      confirmSub.textContent = "回到拍照畫面";
+    }
+  }
+
+  function setStageMode(m){
+    mode = m;
+    stageEl.classList.toggle("mode-review", m === "review");
+    updateButtons();
+  }
+
+  function flash(){
+    flashOverlay.classList.add("flash");
+    requestAnimationFrame(() => {
+      flashOverlay.style.transition = "opacity 0.35s ease";
+      flashOverlay.classList.remove("flash");
+    });
+  }
+
+  function playBeep(freq, duration){
+    try{
+      const Ctx = window.AudioContext || window.webkitAudioContext;
+      if(!Ctx) return;
+      if(!playBeep._ctx) playBeep._ctx = new Ctx();
+      const ctx = playBeep._ctx;
+      const osc = ctx.createOscillator();
+      const gain = ctx.createGain();
+      osc.frequency.value = freq;
+      gain.gain.setValueAtTime(0.16, ctx.currentTime);
+      osc.connect(gain);
+      gain.connect(ctx.destination);
+      osc.start();
+      osc.stop(ctx.currentTime + duration);
+    }catch(e){}
+  }
+
+  // ---------- 語音回饋 ----------
+  function loadVoiceEnabled(){
+    try{
+      const raw = localStorage.getItem(VOICE_STORAGE_KEY);
+      if(raw === "false") return false;
+    }catch(e){}
+    return true;
+  }
+
+  function saveVoiceEnabled(){
+    try{ localStorage.setItem(VOICE_STORAGE_KEY, String(voiceEnabled)); }catch(e){}
+  }
+
+  function speak(text){
+    if(!voiceEnabled) return;
+    if(!("speechSynthesis" in window)) return;
+    try{
+      window.speechSynthesis.cancel();
+      const u = new SpeechSynthesisUtterance(text);
+      u.lang = "zh-TW";
+      u.rate = 1;
+      window.speechSynthesis.speak(u);
+    }catch(e){}
+  }
+
+  function chineseNum(n){
+    return CN_NUM[n] !== undefined ? CN_NUM[n] : String(n);
+  }
+
+  function setVoiceEnabled(on){
+    voiceEnabled = on;
+    btnVoiceToggle.classList.toggle("on", on);
+    btnVoiceToggle.textContent = on ? "🔊 語音回饋" : "🔇 語音回饋";
+    saveVoiceEnabled();
+    if(on) speak("語音回饋已開啟");
+    else{
+      try{ window.speechSynthesis.cancel(); }catch(e){}
+      playBeep(440, 0.12);
+    }
+  }
+
+  btnVoiceToggle.addEventListener("click", () => setVoiceEnabled(!voiceEnabled));
+
+  // ---------- 拍照倒數秒數設定 ----------
+  function loadCountdownSeconds(){
+    try{
+      const raw = localStorage.getItem(COUNTDOWN_STORAGE_KEY);
+      const n = parseInt(raw, 10);
+      if(!isNaN(n) && n >= 0 && n <= 10) return n;
+    }catch(e){}
+    return 3;
+  }
+
+  function saveCountdownSeconds(){
+    try{ localStorage.setItem(COUNTDOWN_STORAGE_KEY, String(countdownSeconds)); }catch(e){}
+  }
+
+  function updateCountdownDisplay(){
+    countdownValueEl.textContent = countdownSeconds;
+  }
+
+  countdownMinusBtn.addEventListener("click", () => {
+    countdownSeconds = Math.max(0, countdownSeconds - 1);
+    updateCountdownDisplay();
+    saveCountdownSeconds();
+  });
+  countdownPlusBtn.addEventListener("click", () => {
+    countdownSeconds = Math.min(10, countdownSeconds + 1);
+    updateCountdownDisplay();
+    saveCountdownSeconds();
+  });
+
+  // 按下拍照後，先倒數（讓孩子有時間把眼神從按鍵移到鏡頭），
+  // 倒數期間鎖定兩顆按鍵避免誤觸，倒數結束才真正拍照。
+  // 倒數秒數設為 0 時，會直接拍照不倒數。
+  function startCountdownAndCapture(){
+    if(countdownActive || !stream) return;
+    if(countdownSeconds <= 0){
+      playBeep(1100, 0.18);
+      speak("拍照");
+      takePhoto();
+      return;
+    }
+    countdownActive = true;
+    btnSwitch.disabled = true;
+    confirmBtn.disabled = true;
+    let n = countdownSeconds;
+    countdownEl.textContent = n;
+    countdownEl.style.display = "flex";
+    playBeep(660, 0.12);
+    speak(chineseNum(n));
+
+    const timer = setInterval(() => {
+      n -= 1;
+      if(n > 0){
+        countdownEl.textContent = n;
+        playBeep(660, 0.12);
+        speak(chineseNum(n));
+      } else {
+        clearInterval(timer);
+        countdownEl.style.display = "none";
+        playBeep(1100, 0.18);
+        speak("拍照");
+        takePhoto();
+        countdownActive = false;
+        btnSwitch.disabled = false;
+        confirmBtn.disabled = false;
+      }
+    }, 1000);
+  }
+
+  function takePhoto(){
+    if(!stream) return;
+    const w = video.videoWidth, h = video.videoHeight;
+    if(!w || !h) return;
+    const c = document.createElement("canvas");
+    c.width = w; c.height = h;
+    const ctx = c.getContext("2d");
+    ctx.drawImage(video, 0, 0, w, h);
+    const url = c.toDataURL("image/jpeg", 0.92);
+    photos.unshift({ url, time: new Date() });
+    flash();
+    updatePhotoCount();
+    updateButtons();
+  }
+
+  function showReviewPhoto(){
+    const p = photos[reviewIndex];
+    reviewImg.src = p.url;
+    caption.textContent = `第 ${reviewIndex + 1} 張／共 ${photos.length} 張・${formatTime(p.time)}`;
+  }
+
+  function enterReview(){
+    if(photos.length === 0) return;
+    reviewIndex = 0;
+    setStageMode("review");
+    showReviewPhoto();
+  }
+
+  function nextReviewPhoto(){
+    if(photos.length === 0){ setStageMode("camera"); return; }
+    reviewIndex = (reviewIndex + 1) % photos.length;
+    showReviewPhoto();
+  }
+
+  function exitReview(){
+    setStageMode("camera");
+  }
+
+  function formatFileTime(d){
+    const pad = n => String(n).padStart(2, "0");
+    return `${d.getFullYear()}${pad(d.getMonth()+1)}${pad(d.getDate())}_${pad(d.getHours())}${pad(d.getMinutes())}${pad(d.getSeconds())}`;
+  }
+
+  function downloadPhoto(){
+    if(photos.length === 0) return;
+    const p = (mode === "review") ? photos[reviewIndex] : photos[0];
+    const a = document.createElement("a");
+    a.href = p.url;
+    a.download = `照片_${formatFileTime(p.time)}.jpg`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+  }
+
+  btnSwitch.addEventListener("click", () => {
+    if(editMode || countdownActive) return;
+    if(mode === "camera"){
+      if(photos.length === 0){
+        speak("目前還沒有照片");
+        return;
+      }
+      enterReview();
+      speak("瀏覽照片");
+    } else {
+      nextReviewPhoto();
+      speak(`第 ${reviewIndex + 1} 張`);
+    }
+  });
+
+  confirmBtn.addEventListener("click", () => {
+    if(editMode || countdownActive) return;
+    if(mode === "camera"){
+      startCountdownAndCapture();
+    } else {
+      exitReview();
+      speak("回到相機");
+    }
+  });
+
+  btnDownloadPhoto.addEventListener("click", () => {
+    downloadPhoto();
+    speak("照片已下載");
+  });
+
+  btnClearPhotos.addEventListener("click", () => {
+    if(photos.length === 0) return;
+    if(!confirm("確定要清除所有已拍的照片嗎？此動作無法復原。")) return;
+    photos = [];
+    updatePhotoCount();
+    if(mode === "review") setStageMode("camera");
+    else updateButtons();
+    speak("已清除照片");
+  });
+
+  async function openStream(facing){
+    const constraints = { video: { facingMode: { ideal: facing } }, audio: false };
+    return navigator.mediaDevices.getUserMedia(constraints);
+  }
+
+  async function startCamera(){
+    pickerWarn.textContent = "";
+    if(!supported()){
+      pickerWarn.textContent = "您的瀏覽器不支援相機功能，請改用支援攝影機的瀏覽器開啟這個檔案。";
+      return;
+    }
+    try{
+      stream = await openStream(currentFacing);
+    }catch(e){
+      try{
+        // 若指定鏡頭不可用，退回任意可用鏡頭
+        stream = await navigator.mediaDevices.getUserMedia({ video: true, audio: false });
+      }catch(e2){
+        pickerWarn.textContent = "無法開啟相機，請確認已允許相機權限，或改用支援攝影機的裝置。";
+        return;
+      }
+    }
+    video.srcObject = stream;
+    await video.play().catch(() => {});
+    overlay.style.display = "none";
+    btnSwitch.disabled = false;
+    confirmBtn.disabled = false;
+    updateButtons();
+    speak("相機已開啟，可以開始拍照了");
+  }
+
+  btnStartCamera.addEventListener("click", startCamera);
+
+  btnFlipCamera.addEventListener("click", async () => {
+    if(!stream) return;
+    currentFacing = (currentFacing === "environment") ? "user" : "environment";
+    stream.getTracks().forEach(t => t.stop());
+    try{
+      stream = await openStream(currentFacing);
+      video.srcObject = stream;
+      await video.play().catch(() => {});
+      speak("已切換鏡頭");
+    }catch(e){
+      pickerWarn.textContent = "";
+      alert("找不到另一個鏡頭，已保留目前鏡頭。");
+      try{
+        stream = await navigator.mediaDevices.getUserMedia({ video: true, audio: false });
+        video.srcObject = stream;
+        await video.play().catch(() => {});
+      }catch(e2){}
+    }
+  });
+
+  if(!supported()){
+    pickerWarn.textContent = "您的瀏覽器不支援相機功能，請改用支援攝影機的瀏覽器開啟這個檔案。";
+  }
+
+  updatePhotoCount();
+  updateButtons();
+  updateCountdownDisplay();
+  btnVoiceToggle.classList.toggle("on", voiceEnabled);
+  btnVoiceToggle.textContent = voiceEnabled ? "🔊 語音回饋" : "🔇 語音回饋";
+  initLayout();
+</script>
+</body>
+</html>
