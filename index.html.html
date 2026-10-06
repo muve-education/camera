@@ -494,3 +494,450 @@
     const box = layout[key];
     const startX = e.clientX, startY = e.clientY;
     const startW = box.width, startH = box.height;
+
+    function onMove(ev){
+      box.width = startW + (ev.clientX - startX);
+      box.height = startH + (ev.clientY - startY);
+      clampToCanvas(box);
+      applyLayout();
+    }
+    function onUp(){
+      document.removeEventListener("mousemove", onMove);
+      document.removeEventListener("mouseup", onUp);
+      saveLayout();
+    }
+    document.addEventListener("mousemove", onMove);
+    document.addEventListener("mouseup", onUp);
+  }
+
+  btnSwitch.addEventListener("mousedown", (e) => {
+    if(!editMode || e.target.closest(".resize-handle")) return;
+    startDrag(e, "switch");
+  });
+  confirmBtn.addEventListener("mousedown", (e) => {
+    if(!editMode || e.target.closest(".resize-handle")) return;
+    startDrag(e, "confirm");
+  });
+  stageEl.addEventListener("mousedown", (e) => {
+    if(!editMode) return;
+    if(e.target.closest(".resize-handle")) return;
+    if(e.target.closest(".picker-overlay")) return;
+    startDrag(e, "stage");
+  });
+  document.querySelector('.resize-handle[data-target="switch"]').addEventListener("mousedown", (e) => startResize(e, "switch"));
+  document.querySelector('.resize-handle[data-target="confirm"]').addEventListener("mousedown", (e) => startResize(e, "confirm"));
+  document.querySelector('.resize-handle[data-target="stage"]').addEventListener("mousedown", (e) => startResize(e, "stage"));
+
+  // ---------- 編輯模式切換 ----------
+  function setEditMode(on){
+    editMode = on;
+    document.body.classList.toggle("edit-mode", on);
+    btnEditToggle.classList.toggle("on", on);
+    btnSwitch.classList.toggle("editable", on);
+    confirmBtn.classList.toggle("editable", on);
+    stageEl.classList.toggle("editable", on);
+  }
+
+  btnEditToggle.addEventListener("click", () => setEditMode(!editMode));
+  document.getElementById("finish-edit").addEventListener("click", () => setEditMode(false));
+
+  // ---------- 大小快速預設 ----------
+  function applyPreset(scale){
+    const def = defaultLayout();
+    ["switch", "confirm"].forEach(key => {
+      const cur = layout[key];
+      const baseW = def[key].width;
+      const baseH = def[key].height;
+      cur.width = baseW * scale;
+      cur.height = baseH * scale;
+      clampToCanvas(cur);
+    });
+    applyLayout();
+    saveLayout();
+  }
+  document.getElementById("preset-standard").addEventListener("click", () => applyPreset(1));
+  document.getElementById("preset-large").addEventListener("click", () => applyPreset(1.3));
+  document.getElementById("preset-xlarge").addEventListener("click", () => applyPreset(1.6));
+
+  document.getElementById("reset-layout").addEventListener("click", () => {
+    layout = defaultLayout();
+    applyLayout();
+    saveLayout();
+  });
+
+  // ---------- 匯出／匯入設定檔 ----------
+  document.getElementById("export-layout").addEventListener("click", () => {
+    const blob = new Blob([JSON.stringify(layout, null, 2)], { type: "application/json" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = "按鍵版面設定.json";
+    a.click();
+    URL.revokeObjectURL(url);
+  });
+
+  document.getElementById("import-layout").addEventListener("click", () => importFileInput.click());
+  importFileInput.addEventListener("change", async () => {
+    const file = importFileInput.files[0];
+    if(!file) return;
+    try{
+      const text = await file.text();
+      const parsed = JSON.parse(text);
+      if(parsed.switch && parsed.confirm){
+        layout.switch = clampToCanvas(parsed.switch);
+        layout.confirm = clampToCanvas(parsed.confirm);
+        layout.stage = clampToCanvas(parsed.stage || defaultLayout().stage);
+        applyLayout();
+        saveLayout();
+      }
+    }catch(e){
+      alert("設定檔格式不正確");
+    }
+    importFileInput.value = "";
+  });
+
+  window.addEventListener("resize", () => {
+    Object.keys(layout).forEach(key => { layout[key] = clampToCanvas(layout[key]); });
+    applyLayout();
+  });
+
+  // ---------- 相機 / 拍照邏輯 ----------
+  function supported(){
+    return !!(navigator.mediaDevices && navigator.mediaDevices.getUserMedia);
+  }
+
+  function formatTime(d){
+    const hh = String(d.getHours()).padStart(2, "0");
+    const mm = String(d.getMinutes()).padStart(2, "0");
+    const ss = String(d.getSeconds()).padStart(2, "0");
+    return `${hh}:${mm}:${ss}`;
+  }
+
+  function updatePhotoCount(){
+    photoCountEl.textContent = `已拍 ${photos.length} 張`;
+    btnDownloadPhoto.disabled = photos.length === 0;
+  }
+
+  function updateButtons(){
+    if(mode === "camera"){
+      switchIcon.textContent = "🖼️";
+      switchLabel.textContent = "瀏覽照片";
+      switchSub.textContent = photos.length ? "查看已拍照片" : "尚無照片";
+      confirmBtn.classList.remove("is-review");
+      confirmIcon.textContent = "📷";
+      confirmLabel.textContent = "拍照";
+      confirmSub.textContent = "拍下目前畫面";
+      caption.textContent = "";
+    } else {
+      switchIcon.textContent = "➡️";
+      switchLabel.textContent = "下一張";
+      switchSub.textContent = "換下一張照片";
+      confirmBtn.classList.add("is-review");
+      confirmIcon.textContent = "↩️";
+      confirmLabel.textContent = "返回相機";
+      confirmSub.textContent = "回到拍照畫面";
+    }
+  }
+
+  function setStageMode(m){
+    mode = m;
+    stageEl.classList.toggle("mode-review", m === "review");
+    updateButtons();
+  }
+
+  function flash(){
+    flashOverlay.classList.add("flash");
+    requestAnimationFrame(() => {
+      flashOverlay.style.transition = "opacity 0.35s ease";
+      flashOverlay.classList.remove("flash");
+    });
+  }
+
+  function playBeep(freq, duration){
+    try{
+      const Ctx = window.AudioContext || window.webkitAudioContext;
+      if(!Ctx) return;
+      if(!playBeep._ctx) playBeep._ctx = new Ctx();
+      const ctx = playBeep._ctx;
+      const osc = ctx.createOscillator();
+      const gain = ctx.createGain();
+      osc.frequency.value = freq;
+      gain.gain.setValueAtTime(0.16, ctx.currentTime);
+      osc.connect(gain);
+      gain.connect(ctx.destination);
+      osc.start();
+      osc.stop(ctx.currentTime + duration);
+    }catch(e){}
+  }
+
+  // ---------- 語音回饋 ----------
+  function loadVoiceEnabled(){
+    try{
+      const raw = localStorage.getItem(VOICE_STORAGE_KEY);
+      if(raw === "false") return false;
+    }catch(e){}
+    return true;
+  }
+
+  function saveVoiceEnabled(){
+    try{ localStorage.setItem(VOICE_STORAGE_KEY, String(voiceEnabled)); }catch(e){}
+  }
+
+  function speak(text){
+    if(!voiceEnabled) return;
+    if(!("speechSynthesis" in window)) return;
+    try{
+      window.speechSynthesis.cancel();
+      const u = new SpeechSynthesisUtterance(text);
+      u.lang = "zh-TW";
+      u.rate = 1;
+      window.speechSynthesis.speak(u);
+    }catch(e){}
+  }
+
+  function chineseNum(n){
+    return CN_NUM[n] !== undefined ? CN_NUM[n] : String(n);
+  }
+
+  function setVoiceEnabled(on){
+    voiceEnabled = on;
+    btnVoiceToggle.classList.toggle("on", on);
+    btnVoiceToggle.textContent = on ? "🔊 語音回饋" : "🔇 語音回饋";
+    saveVoiceEnabled();
+    if(on) speak("語音回饋已開啟");
+    else{
+      try{ window.speechSynthesis.cancel(); }catch(e){}
+      playBeep(440, 0.12);
+    }
+  }
+
+  btnVoiceToggle.addEventListener("click", () => setVoiceEnabled(!voiceEnabled));
+
+  // ---------- 拍照倒數秒數設定 ----------
+  function loadCountdownSeconds(){
+    try{
+      const raw = localStorage.getItem(COUNTDOWN_STORAGE_KEY);
+      const n = parseInt(raw, 10);
+      if(!isNaN(n) && n >= 0 && n <= 10) return n;
+    }catch(e){}
+    return 3;
+  }
+
+  function saveCountdownSeconds(){
+    try{ localStorage.setItem(COUNTDOWN_STORAGE_KEY, String(countdownSeconds)); }catch(e){}
+  }
+
+  function updateCountdownDisplay(){
+    countdownValueEl.textContent = countdownSeconds;
+  }
+
+  countdownMinusBtn.addEventListener("click", () => {
+    countdownSeconds = Math.max(0, countdownSeconds - 1);
+    updateCountdownDisplay();
+    saveCountdownSeconds();
+  });
+  countdownPlusBtn.addEventListener("click", () => {
+    countdownSeconds = Math.min(10, countdownSeconds + 1);
+    updateCountdownDisplay();
+    saveCountdownSeconds();
+  });
+
+  // 按下拍照後，先倒數（讓孩子有時間把眼神從按鍵移到鏡頭），
+  // 倒數期間鎖定兩顆按鍵避免誤觸，倒數結束才真正拍照。
+  // 倒數秒數設為 0 時，會直接拍照不倒數。
+  function startCountdownAndCapture(){
+    if(countdownActive || !stream) return;
+    if(countdownSeconds <= 0){
+      playBeep(1100, 0.18);
+      speak("拍照");
+      takePhoto();
+      return;
+    }
+    countdownActive = true;
+    btnSwitch.disabled = true;
+    confirmBtn.disabled = true;
+    let n = countdownSeconds;
+    countdownEl.textContent = n;
+    countdownEl.style.display = "flex";
+    playBeep(660, 0.12);
+    speak(chineseNum(n));
+
+    const timer = setInterval(() => {
+      n -= 1;
+      if(n > 0){
+        countdownEl.textContent = n;
+        playBeep(660, 0.12);
+        speak(chineseNum(n));
+      } else {
+        clearInterval(timer);
+        countdownEl.style.display = "none";
+        playBeep(1100, 0.18);
+        speak("拍照");
+        takePhoto();
+        countdownActive = false;
+        btnSwitch.disabled = false;
+        confirmBtn.disabled = false;
+      }
+    }, 1000);
+  }
+
+  function takePhoto(){
+    if(!stream) return;
+    const w = video.videoWidth, h = video.videoHeight;
+    if(!w || !h) return;
+    const c = document.createElement("canvas");
+    c.width = w; c.height = h;
+    const ctx = c.getContext("2d");
+    ctx.drawImage(video, 0, 0, w, h);
+    const url = c.toDataURL("image/jpeg", 0.92);
+    photos.unshift({ url, time: new Date() });
+    flash();
+    updatePhotoCount();
+    updateButtons();
+  }
+
+  function showReviewPhoto(){
+    const p = photos[reviewIndex];
+    reviewImg.src = p.url;
+    caption.textContent = `第 ${reviewIndex + 1} 張／共 ${photos.length} 張・${formatTime(p.time)}`;
+  }
+
+  function enterReview(){
+    if(photos.length === 0) return;
+    reviewIndex = 0;
+    setStageMode("review");
+    showReviewPhoto();
+  }
+
+  function nextReviewPhoto(){
+    if(photos.length === 0){ setStageMode("camera"); return; }
+    reviewIndex = (reviewIndex + 1) % photos.length;
+    showReviewPhoto();
+  }
+
+  function exitReview(){
+    setStageMode("camera");
+  }
+
+  function formatFileTime(d){
+    const pad = n => String(n).padStart(2, "0");
+    return `${d.getFullYear()}${pad(d.getMonth()+1)}${pad(d.getDate())}_${pad(d.getHours())}${pad(d.getMinutes())}${pad(d.getSeconds())}`;
+  }
+
+  function downloadPhoto(){
+    if(photos.length === 0) return;
+    const p = (mode === "review") ? photos[reviewIndex] : photos[0];
+    const a = document.createElement("a");
+    a.href = p.url;
+    a.download = `照片_${formatFileTime(p.time)}.jpg`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+  }
+
+  btnSwitch.addEventListener("click", () => {
+    if(editMode || countdownActive) return;
+    if(mode === "camera"){
+      if(photos.length === 0){
+        speak("目前還沒有照片");
+        return;
+      }
+      enterReview();
+      speak("瀏覽照片");
+    } else {
+      nextReviewPhoto();
+      speak(`第 ${reviewIndex + 1} 張`);
+    }
+  });
+
+  confirmBtn.addEventListener("click", () => {
+    if(editMode || countdownActive) return;
+    if(mode === "camera"){
+      startCountdownAndCapture();
+    } else {
+      exitReview();
+      speak("回到相機");
+    }
+  });
+
+  btnDownloadPhoto.addEventListener("click", () => {
+    downloadPhoto();
+    speak("照片已下載");
+  });
+
+  btnClearPhotos.addEventListener("click", () => {
+    if(photos.length === 0) return;
+    if(!confirm("確定要清除所有已拍的照片嗎？此動作無法復原。")) return;
+    photos = [];
+    updatePhotoCount();
+    if(mode === "review") setStageMode("camera");
+    else updateButtons();
+    speak("已清除照片");
+  });
+
+  async function openStream(facing){
+    const constraints = { video: { facingMode: { ideal: facing } }, audio: false };
+    return navigator.mediaDevices.getUserMedia(constraints);
+  }
+
+  async function startCamera(){
+    pickerWarn.textContent = "";
+    if(!supported()){
+      pickerWarn.textContent = "您的瀏覽器不支援相機功能，請改用支援攝影機的瀏覽器開啟這個檔案。";
+      return;
+    }
+    try{
+      stream = await openStream(currentFacing);
+    }catch(e){
+      try{
+        // 若指定鏡頭不可用，退回任意可用鏡頭
+        stream = await navigator.mediaDevices.getUserMedia({ video: true, audio: false });
+      }catch(e2){
+        pickerWarn.textContent = "無法開啟相機，請確認已允許相機權限，或改用支援攝影機的裝置。";
+        return;
+      }
+    }
+    video.srcObject = stream;
+    await video.play().catch(() => {});
+    overlay.style.display = "none";
+    btnSwitch.disabled = false;
+    confirmBtn.disabled = false;
+    updateButtons();
+    speak("相機已開啟，可以開始拍照了");
+  }
+
+  btnStartCamera.addEventListener("click", startCamera);
+
+  btnFlipCamera.addEventListener("click", async () => {
+    if(!stream) return;
+    currentFacing = (currentFacing === "environment") ? "user" : "environment";
+    stream.getTracks().forEach(t => t.stop());
+    try{
+      stream = await openStream(currentFacing);
+      video.srcObject = stream;
+      await video.play().catch(() => {});
+      speak("已切換鏡頭");
+    }catch(e){
+      pickerWarn.textContent = "";
+      alert("找不到另一個鏡頭，已保留目前鏡頭。");
+      try{
+        stream = await navigator.mediaDevices.getUserMedia({ video: true, audio: false });
+        video.srcObject = stream;
+        await video.play().catch(() => {});
+      }catch(e2){}
+    }
+  });
+
+  if(!supported()){
+    pickerWarn.textContent = "您的瀏覽器不支援相機功能，請改用支援攝影機的瀏覽器開啟這個檔案。";
+  }
+
+  updatePhotoCount();
+  updateButtons();
+  updateCountdownDisplay();
+  btnVoiceToggle.classList.toggle("on", voiceEnabled);
+  btnVoiceToggle.textContent = voiceEnabled ? "🔊 語音回饋" : "🔇 語音回饋";
+  initLayout();
+</script>
+</body>
+</html>
